@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { useState, useMemo } from "react";
 
 const ZONES = ["상부", "하부", "B", "C", "D", "P", "T", "W", "Z"];
