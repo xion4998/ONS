@@ -12,10 +12,12 @@ const FLOW_NUMS = [12,13,14,15,16,17,18,19,20];
 const TYPE_NUMS = { "선반": SHELF_NUMS, "플로우": FLOW_NUMS };
 const TYPES = ["선반", "플로우"];
 
-const fontLink = document.createElement("link");
-fontLink.rel = "stylesheet";
-fontLink.href = "https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css";
-document.head.appendChild(fontLink);
+try {
+  const fontLink = document.createElement("link");
+  fontLink.rel = "stylesheet";
+  fontLink.href = "https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css";
+  document.head.appendChild(fontLink);
+} catch (e) {}
 
 const initData = () => {
   try {
@@ -29,7 +31,8 @@ const initData = () => {
       d[z][m] = {
         "선반": Array(11).fill(false),
         "플로우": Array(9).fill(false),
-        picking: false,
+        flowPicking: false,
+        shelfPicking: false,
       };
     });
   });
@@ -55,6 +58,16 @@ export default function App() {
   const [activeZone, setActiveZone] = useState(ZONES[0]);
   const [activeMachine, setActiveMachine] = useState(1);
   const [copied, setCopied] = useState(false);
+  const [enabledMachines, setEnabledMachines] = useState(() => {
+    try { const s = localStorage.getItem("ons_enabled_machines"); if (s) return JSON.parse(s); } catch (e) {}
+    return { 1: true, 2: true };
+  });
+
+  const toggleMachineEnabled = (m) => {
+    const next = { ...enabledMachines, [m]: !enabledMachines[m] };
+    setEnabledMachines(next);
+    try { localStorage.setItem("ons_enabled_machines", JSON.stringify(next)); } catch (e) {}
+  };
 
   const saveData = (newData) => {
     setData(newData);
@@ -74,8 +87,15 @@ export default function App() {
     saveData({ ...data, [zone]: { ...data[zone], [machine]: { ...data[zone][machine], [type]: newArr } } });
   };
 
-  const togglePicking = (zone, machine) => {
-    saveData({ ...data, [zone]: { ...data[zone], [machine]: { ...data[zone][machine], picking: !data[zone][machine].picking } } });
+  const togglePicking = (zone, machine, type) => {
+    const pickKey = type === "플로우" ? "flowPicking" : "shelfPicking";
+    const cur = data[zone][machine];
+    const newVal = !(cur[pickKey] || false);
+    saveData({ ...data, [zone]: { ...data[zone], [machine]: {
+      ...cur,
+      [pickKey]: newVal,
+      [type]: newVal ? Array(TYPE_NUMS[type].length).fill(true) : cur[type],
+    }}});
   };
 
   const [resetConfirm, setResetConfirm] = useState(false);
@@ -90,7 +110,7 @@ export default function App() {
     ZONES.forEach(z => {
       d[z] = {};
       MACHINES.forEach(m => {
-        d[z][m] = { "선반": Array(11).fill(false), "플로우": Array(9).fill(false), picking: false };
+        d[z][m] = { "선반": Array(11).fill(false), "플로우": Array(9).fill(false), flowPicking: false, shelfPicking: false };
       });
     });
     saveData(d);
@@ -160,42 +180,60 @@ export default function App() {
       `──────────────`,
     ];
 
-    MACHINES.forEach(m => {
-      TYPES.forEach(type => {
-        const nums = TYPE_NUMS[type];
-        lines.push(`[${m}호기 ${type}]`);
+    MACHINES.filter(m => enabledMachines[m]).forEach(m => {
+      lines.push(`ONS ${m}호기`);
 
-        const pickingZones = ZONES.filter(z => data[z][m].picking);
-        const completed = ZONES.filter(z => !data[z][m].picking && data[z][m][type].filter(v=>v).length === nums.length);
-        const inProgress = ZONES.filter(z => {
-          if (data[z][m].picking) return false;
-          const d = data[z][m][type].filter(v=>v).length;
-          return d > 0 && d < nums.length;
-        });
-        const notStarted = ZONES.filter(z => !data[z][m].picking && data[z][m][type].every(v=>!v));
+      // 존별 상태 계산
+      const zoneStatus = {};
+      ZONES.forEach(z => {
+        const flowPicking = data[z][m].flowPicking || false;
+        const shelfPicking = data[z][m].shelfPicking || false;
+        const flowArr = data[z][m]["플로우"];
+        const shelfArr = data[z][m]["선반"];
+        const flowDone = flowArr.filter(v=>v).length;
+        const shelfDone = shelfArr.filter(v=>v).length;
+        const flowAll = flowDone === FLOW_NUMS.length;
+        const shelfAll = shelfDone === SHELF_NUMS.length;
+        const lastFlowNum = flowDone > 0 ? FLOW_NUMS[flowDone - 1] : null;
+        const lastShelfNum = shelfDone > 0 ? SHELF_NUMS[shelfDone - 1] : null;
 
-        // 전체 피킹완료
-        if (pickingZones.length === ZONES.length) {
-          lines.push(`  전체 피킹완료`);
-        // 전체 불출완료
-        } else if (completed.length === ZONES.length) {
-          lines.push(`  전체 불출완료`);
-        } else {
-          if (pickingZones.length > 0) lines.push(`  🟡 ${pickingZones.map(z => z.length<=1?z+"존":z).join(", ")} 피킹완료`);
-          if (completed.length > 0) lines.push(`  ✅ ${completed.map(z => z.length<=1?z+"존":z).join(", ")} 불출완료`);
-          inProgress.forEach(z => {
-            const checks = data[z][m][type];
-            const doneCnt = checks.filter(v=>v).length;
-            const lastNum = nums[doneCnt - 1];
-            lines.push(`  🔄 ${z.length<=1?z+"존":z}  ${lastNum}번 불출중`);
-          });
-          if (notStarted.length > 0) lines.push(`  ⏳ 미시작  ${notStarted.map(z => z.length<=1?z+"존":z).join(", ")}`);
-        }
+        if ((flowPicking || flowAll) && (shelfPicking || shelfAll)) { zoneStatus[z] = "불출완료"; return; }
+        if (flowDone === 0 && shelfDone === 0 && !flowPicking && !shelfPicking) { zoneStatus[z] = "미불출"; return; }
+
+        let flowStatus = "";
+        if (flowPicking || flowAll) flowStatus = "플로우 피킹완료";
+        else if (flowDone > 0) flowStatus = `플로우 ${lastFlowNum}번 불출중`;
+
+        let shelfStatus = "";
+        if (shelfPicking || shelfAll) shelfStatus = "선반 피킹완료";
+        else if (shelfDone > 0) shelfStatus = `선반 ${lastShelfNum}번 불출중`;
+
+        zoneStatus[z] = [flowStatus, shelfStatus].filter(Boolean).join(" / ");
+      });
+
+      // 같은 상태끼리 묶기
+      const statusGroups = {};
+      ZONES.forEach(z => {
+        const st = zoneStatus[z];
+        if (!statusGroups[st]) statusGroups[st] = [];
+        statusGroups[st].push(z);
+      });
+
+      const order = ["불출완료"];
+      const sorted = Object.entries(statusGroups).sort(([a], [b]) => {
+        const ai = order.indexOf(a) >= 0 ? order.indexOf(a) : a === "미불출" ? 999 : 50;
+        const bi = order.indexOf(b) >= 0 ? order.indexOf(b) : b === "미불출" ? 999 : 50;
+        return ai - bi;
+      });
+
+      sorted.forEach(([status, zones]) => {
+        const names = zones.map(z => z.length<=1?z+"존":z).join("/");
+        lines.push(`${names} : ${status}`);
       });
     });
 
     lines.push(`──────────────`);
-    lines.push(`플로우 ${grand.flowPct}% / 선반 ${grand.shelfPct}%`);
+    lines.push(`토탈 ${grand.pct}%`);
     return lines.join("\n");
   };
 
@@ -277,19 +315,19 @@ export default function App() {
               <div style={{ height: 3, background: "#e2e8f0", borderRadius: 2, marginBottom: 4 }}>
                 <div style={{ height: 3, borderRadius: 2, background: color, width: `${pct}%`, transition: "width 0.4s" }} />
               </div>
-              <div style={{ display: "flex", justifyContent: "center", gap: 5, marginBottom: 4 }}>
-                <span style={{ fontSize: 9, color: "#059669", fontWeight: 600 }}>플 {flowPct}%</span>
-                <span style={{ fontSize: 9, color: "#0891b2", fontWeight: 600 }}>선 {shelfPct}%</span>
-              </div>
               <div style={{ display: "flex", gap: 3 }}>
                 {MACHINES.map(m => {
-                  const isPicking = data[z][m].picking;
-                  const flowDone = data[z][m]["플로우"].filter(v=>v).length === FLOW_NUMS.length;
-                  const shelfDone = data[z][m]["선반"].filter(v=>v).length === SHELF_NUMS.length;
-                  const isBul = flowDone && shelfDone && !isPicking;
+                  const flowPicking = data[z][m].flowPicking || false;
+                  const shelfPicking = data[z][m].shelfPicking || false;
+                  const flowAll = data[z][m]["플로우"].every(v=>v);
+                  const shelfAll = data[z][m]["선반"].every(v=>v);
+                  const label = flowPicking && shelfPicking ? "완료" : flowPicking ? "플피킹" : shelfPicking ? "선피킹" : flowAll && shelfAll ? "불출" : "";
+                  const bg = (flowPicking && shelfPicking) || (flowAll && shelfAll) ? "#dcfce7" : (flowPicking || shelfPicking) ? "#fef9c3" : "#f8fafc";
+                  const color = (flowPicking && shelfPicking) || (flowAll && shelfAll) ? "#15803d" : (flowPicking || shelfPicking) ? "#a16207" : "#94a3b8";
+                  const border = (flowPicking && shelfPicking) || (flowAll && shelfAll) ? "#86efac" : (flowPicking || shelfPicking) ? "#fde047" : "#e2e8f0";
                   return (
-                    <div key={m} style={{ flex: 1, fontSize: 8, fontWeight: 700, padding: "2px 0", borderRadius: 5, textAlign: "center", background: isBul?"#dcfce7":isPicking?"#fef9c3":"#f8fafc", color: isBul?"#15803d":isPicking?"#a16207":"#94a3b8", border: `1px solid ${isBul?"#86efac":isPicking?"#fde047":"#e2e8f0"}` }}>
-                      {m}호{isBul?"불출":isPicking?"피킹":""}
+                    <div key={m} style={{ flex: 1, fontSize: 8, fontWeight: 700, padding: "2px 0", borderRadius: 5, textAlign: "center", background: bg, color, border: `1px solid ${border}` }}>
+                      {m}호{label}
                     </div>
                   );
                 })}
@@ -318,22 +356,24 @@ export default function App() {
 
         <div style={{ fontSize: 11, color: S.textSub, marginBottom: 10, fontWeight: 500 }}>탭하면 해당 번호까지 누적 체크</div>
 
-        {/* 피킹완료 버튼 */}
+        {/* 피킹완료 버튼 - 플로우/선반 각각 */}
         {(() => {
-          const isPicking = data[activeZone][activeMachine].picking;
-          const flowDone = data[activeZone][activeMachine]["플로우"].filter(v=>v).length;
-          const shelfDone = data[activeZone][activeMachine]["선반"].filter(v=>v).length;
-          const isBul = flowDone === FLOW_NUMS.length && shelfDone === SHELF_NUMS.length && !isPicking;
+          const cur = data[activeZone][activeMachine];
+          const flowPicking = cur.flowPicking || false;
+          const shelfPicking = cur.shelfPicking || false;
+          const flowAll = cur["플로우"].every(v=>v);
+          const shelfAll = cur["선반"].every(v=>v);
+          const flowBul = flowAll && !flowPicking;
+          const shelfBul = shelfAll && !shelfPicking;
           return (
-            <button onClick={() => togglePicking(activeZone, activeMachine)} style={{
-              width: "100%", marginBottom: 12, fontSize: 12, fontWeight: 800,
-              padding: "8px 0", borderRadius: 9, cursor: "pointer", transition: "all 0.15s",
-              background: isBul ? "#dcfce7" : isPicking ? "#fef9c3" : "#f8fafc",
-              border: `1.5px solid ${isBul ? "#86efac" : isPicking ? "#fde047" : "#e2e8f0"}`,
-              color: isBul ? "#15803d" : isPicking ? "#a16207" : "#94a3b8", fontFamily: "inherit"
-            }}>
-              {isBul ? "✓ 불출완료" : isPicking ? "✓ 피킹완료" : "피킹완료 체크"}
-            </button>
+            <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+              <button onClick={() => togglePicking(activeZone, activeMachine, "플로우")} style={{ flex:1, fontSize:11, fontWeight:800, padding:"8px 0", borderRadius:9, cursor:"pointer", transition:"all 0.15s", background:flowBul?"#dcfce7":flowPicking?"#fef9c3":"#f8fafc", border:`1.5px solid ${flowBul?"#86efac":flowPicking?"#fde047":"#e2e8f0"}`, color:flowBul?"#15803d":flowPicking?"#a16207":"#94a3b8", fontFamily:"inherit" }}>
+                {flowBul ? "✓ 플 불출완료" : flowPicking ? "✓ 플 피킹완료" : "플로우 피킹완료"}
+              </button>
+              <button onClick={() => togglePicking(activeZone, activeMachine, "선반")} style={{ flex:1, fontSize:11, fontWeight:800, padding:"8px 0", borderRadius:9, cursor:"pointer", transition:"all 0.15s", background:shelfBul?"#dcfce7":shelfPicking?"#fef9c3":"#f8fafc", border:`1.5px solid ${shelfBul?"#86efac":shelfPicking?"#fde047":"#e2e8f0"}`, color:shelfBul?"#15803d":shelfPicking?"#a16207":"#94a3b8", fontFamily:"inherit" }}>
+                {shelfBul ? "✓ 선 불출완료" : shelfPicking ? "✓ 선 피킹완료" : "선반 피킹완료"}
+              </button>
+            </div>
           );
         })()}
 
@@ -388,7 +428,22 @@ export default function App() {
 
       {/* 존별 요약 */}
       <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 16, padding: 16, boxShadow: S.shadow }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: S.text, marginBottom: 12 }}>존별 요약</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: S.text }}>존별 요약</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {MACHINES.map(m => (
+              <button key={m} onClick={() => toggleMachineEnabled(m)} style={{
+                fontSize: 10, fontWeight: 800, padding: "4px 12px", borderRadius: 8, cursor: "pointer",
+                background: enabledMachines[m] ? (m===1?"#7c3aed":"#0891b2") : "#f8fafc",
+                border: `1px solid ${m===1?"#7c3aed":"#0891b2"}`,
+                color: enabledMachines[m] ? "#fff" : "#94a3b8",
+                fontFamily: "inherit", transition: "all 0.15s"
+              }}>
+                {m}호기 {enabledMachines[m] ? "ON" : "OFF"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div style={{ background: S.inputBg, borderRadius: 10, padding: "12px 14px", marginBottom: 10, fontSize: 12, lineHeight: 1.8, color: S.textSub, fontFamily: "monospace", whiteSpace: "pre-wrap", border: `1px solid ${S.border}` }}>
           {getSummaryText()}
         </div>
@@ -397,37 +452,18 @@ export default function App() {
           {copied ? "✓ 복사됨!" : "📤 현황 공유"}
         </button>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {ZONES.map(z => {
-            const { flowDone, shelfDone, flowTotal, shelfTotal, flowPct, shelfPct } = stats[z];
+            const { flowPct, shelfPct } = stats[z];
+            const totalPct = Math.round((flowPct + shelfPct) / 2);
+            const color = ZONE_COLORS[z];
             return (
-              <div key={z} style={{ background: S.inputBg, borderRadius: 10, padding: "8px 12px", border: `1px solid ${S.border}` }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: ZONE_COLORS[z] }}>{z.length<=1?z+"존":z}</div>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    {MACHINES.map(m => (
-                      <span key={m} style={{ fontSize: 10, color: m===1?"#7c3aed":"#0891b2", fontWeight: 600 }}>
-                        {m}호기 플{Math.round((data[z][m]["플로우"].filter(v=>v).length/9)*100)}% 선{Math.round((data[z][m]["선반"].filter(v=>v).length/11)*100)}%
-                      </span>
-                    ))}
-                  </div>
+              <div key={z} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color, minWidth: 32 }}>{z.length<=1?z+"존":z}</div>
+                <div style={{ flex: 1, height: 8, background: "#e2e8f0", borderRadius: 4 }}>
+                  <div style={{ height: 8, borderRadius: 4, background: `linear-gradient(90deg,${color},${color}88)`, width: `${totalPct}%`, transition: "width 0.4s" }} />
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ fontSize: 9, color: "#059669", minWidth: 28, fontWeight: 600 }}>플로우</div>
-                    <div style={{ flex: 1, height: 5, background: "#e2e8f0", borderRadius: 3 }}>
-                      <div style={{ height: 5, borderRadius: 3, background: "#059669", width: `${flowPct}%`, transition: "width 0.4s" }} />
-                    </div>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: flowPct===100?"#059669":S.text, minWidth: 32, textAlign: "right" }}>{flowPct}%</div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ fontSize: 9, color: "#0891b2", minWidth: 28, fontWeight: 600 }}>선반</div>
-                    <div style={{ flex: 1, height: 5, background: "#e2e8f0", borderRadius: 3 }}>
-                      <div style={{ height: 5, borderRadius: 3, background: "#0891b2", width: `${shelfPct}%`, transition: "width 0.4s" }} />
-                    </div>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: shelfPct===100?"#0891b2":S.text, minWidth: 32, textAlign: "right" }}>{shelfPct}%</div>
-                  </div>
-                </div>
+                <div style={{ fontSize: 13, fontWeight: 800, minWidth: 40, textAlign: "right", color: totalPct===100?"#059669":S.text }}>{totalPct}%</div>
               </div>
             );
           })}
