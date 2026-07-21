@@ -102,6 +102,16 @@ export default function App() {
     return { 1: true, 2: true };
   });
 
+  const [calcMode, setCalcMode] = useState(() => {
+    try { const s = localStorage.getItem("ons_calc_mode"); if (s) return s; } catch (e) {}
+    return "합산"; // "합산" | "개별"
+  });
+  const toggleCalcMode = () => {
+    const next = calcMode === "합산" ? "개별" : "합산";
+    setCalcMode(next);
+    try { localStorage.setItem("ons_calc_mode", next); } catch (e) {}
+  };
+
   const toggleMachineEnabled = (m) => {
     const next = { ...enabledMachines, [m]: !enabledMachines[m] };
     setEnabledMachines(next);
@@ -158,13 +168,15 @@ export default function App() {
 
   const stats = useMemo(() => {
     const out = {};
+    const activeMachines = MACHINES.filter(m => enabledMachines[m]);
+    const cnt = activeMachines.length || 1;
     ZONES.forEach(z => {
       let flowDone = 0, shelfDone = 0;
-      const flowTotal = MACHINES.length * FLOW_NUMS.length;
-      const shelfTotal = MACHINES.length * SHELF_NUMS.length;
-      MACHINES.forEach(m => {
-        flowDone += data[z][m]["플로우"].filter(v => v).length;
-        shelfDone += data[z][m]["선반"].filter(v => v).length;
+      const flowTotal = cnt * FLOW_NUMS.length;
+      const shelfTotal = cnt * SHELF_NUMS.length;
+      activeMachines.forEach(m => {
+        flowDone += (data[z][m]["플로우"]||[]).filter(v => v).length;
+        shelfDone += (data[z][m]["선반"]||[]).filter(v => v).length;
       });
       out[z] = {
         flowDone, shelfDone, flowTotal, shelfTotal,
@@ -174,7 +186,7 @@ export default function App() {
       };
     });
     return out;
-  }, [data]);
+  }, [data, enabledMachines]);
 
   const machineTotals = useMemo(() => {
     const out = {};
@@ -211,17 +223,46 @@ export default function App() {
   }, []);
 
   const grand = useMemo(() => {
-    const flowTotal = ZONES.length * MACHINES.length * FLOW_NUMS.length;
-    const shelfTotal = ZONES.length * MACHINES.length * SHELF_NUMS.length;
-    const flowDone = ZONES.reduce((s, z) => s + stats[z].flowDone, 0);
-    const shelfDone = ZONES.reduce((s, z) => s + stats[z].shelfDone, 0);
+    const activeMachines = MACHINES.filter(m => enabledMachines[m]);
+    if (calcMode === "개별") {
+      // 호기별 각각 계산
+      const machineStats = {};
+      activeMachines.forEach(m => {
+        let fDone = 0, sDone = 0;
+        const total = ZONES.length * FLOW_NUMS.length;
+        const sTotal = ZONES.length * SHELF_NUMS.length;
+        ZONES.forEach(z => {
+          fDone += data[z][m]["플로우"].filter(v=>v).length;
+          sDone += data[z][m]["선반"].filter(v=>v).length;
+        });
+        machineStats[m] = {
+          flowPct: Math.round((fDone / total) * 100),
+          shelfPct: Math.round((sDone / sTotal) * 100),
+          pct: Math.round(((fDone + sDone) / (total + sTotal)) * 100),
+        };
+      });
+      const avgPct = Math.round(Object.values(machineStats).reduce((s,m)=>s+m.pct,0)/Object.keys(machineStats).length);
+      return { machineStats, pct: avgPct };
+    }
+    // 합산 모드
+    const cnt = activeMachines.length || 1;
+    const flowTotal = ZONES.length * cnt * FLOW_NUMS.length;
+    const shelfTotal = ZONES.length * cnt * SHELF_NUMS.length;
+    let flowDone = 0, shelfDone = 0;
+    ZONES.forEach(z => {
+      activeMachines.forEach(m => {
+        flowDone += data[z][m]["플로우"].filter(v=>v).length;
+        shelfDone += data[z][m]["선반"].filter(v=>v).length;
+      });
+    });
     return {
       flowDone, shelfDone, flowTotal, shelfTotal,
       flowPct: Math.round((flowDone / flowTotal) * 100),
       shelfPct: Math.round((shelfDone / shelfTotal) * 100),
       pct: Math.round(((flowDone + shelfDone) / (flowTotal + shelfTotal)) * 100),
+      machineStats: null,
     };
-  }, [stats]);
+  }, [stats, enabledMachines, data, calcMode]);
 
   // 대시보드용 요약 실시간 전송
   useEffect(() => {
@@ -335,50 +376,76 @@ export default function App() {
         </div>
       </div>
 
-      {/* Grand Total */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-        {/* 플로우 */}
-        <div style={{ flex: 1, background: "linear-gradient(135deg,#059669,#047857)", borderRadius: 16, padding: "16px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, boxShadow: "0 4px 16px rgba(5,150,105,0.25)" }}>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>플로우 (12~20)</div>
-          <div style={{ position: "relative" }}>
-            <CircleProgress percent={grand.flowPct} color="#ffffff" size={80} />
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>{grand.flowPct}%</span>
+                  {/* Grand Total */}
+      {grand.machineStats ? (
+        <div style={{ display:"flex", gap:10, marginBottom:16 }}>
+          {MACHINES.filter(m => enabledMachines[m]).map(m => {
+            const ms = grand.machineStats[m] || {};
+            const color = m===1?"#7c3aed":"#0891b2";
+            const grad = m===1?"linear-gradient(135deg,#7c3aed,#4f46e5)":"linear-gradient(135deg,#0891b2,#0e7490)";
+            return (
+              <div key={m} style={{ flex:1, background:grad, borderRadius:16, padding:"16px 12px", display:"flex", flexDirection:"column", alignItems:"center", gap:6, boxShadow:`0 4px 16px ${color}44` }}>
+                <div style={{ fontSize:11, color:"rgba(255,255,255,0.85)", fontWeight:600 }}>{m}호기</div>
+                <div style={{ position:"relative" }}>
+                  <svg width={80} height={80} style={{ transform:"rotate(-90deg)" }}>
+                    <circle cx={40} cy={40} r={34} fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth={6} />
+                    <circle cx={40} cy={40} r={34} fill="none" stroke="#fff" strokeWidth={6}
+                      strokeDasharray={`${((ms.pct||0)/100)*2*Math.PI*34} ${2*Math.PI*34}`} strokeLinecap="round" />
+                  </svg>
+                  <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <span style={{ fontSize:17, fontWeight:800, color:"#fff" }}>{ms.pct||0}%</span>
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <span style={{ fontSize:10, color:"rgba(255,255,255,0.8)", background:"rgba(255,255,255,0.15)", borderRadius:6, padding:"2px 6px" }}>플 {ms.flowPct||0}%</span>
+                  <span style={{ fontSize:10, color:"rgba(255,255,255,0.8)", background:"rgba(255,255,255,0.15)", borderRadius:6, padding:"2px 6px" }}>선 {ms.shelfPct||0}%</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1, background: "linear-gradient(135deg,#059669,#047857)", borderRadius: 16, padding: "16px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, boxShadow: "0 4px 16px rgba(5,150,105,0.25)" }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>플로우 (12~20)</div>
+            <div style={{ position: "relative" }}>
+              <CircleProgress percent={grand.flowPct||0} color="#ffffff" size={80} />
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>{grand.flowPct||0}%</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{grand.flowDone} / {grand.flowTotal}</div>
+            <div style={{ display: "flex", gap: 6, width: "100%" }}>
+              {MACHINES.filter(m=>enabledMachines[m]).map(m => (
+                <div key={m} style={{ flex: 1, background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 6px", textAlign: "center" }}>
+                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>{m}호기</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{machineTotals[m]?.flowPct||0}%</div>
+                </div>
+              ))}
             </div>
           </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{grand.flowDone} / {grand.flowTotal}</div>
-          <div style={{ display: "flex", gap: 6, width: "100%" }}>
-            {MACHINES.map(m => (
-              <div key={m} style={{ flex: 1, background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 6px", textAlign: "center" }}>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>{m}호기</div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{machineTotals[m].flowPct}%</div>
+          <div style={{ flex: 1, background: "linear-gradient(135deg,#0891b2,#0e7490)", borderRadius: 16, padding: "16px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, boxShadow: "0 4px 16px rgba(8,145,178,0.25)" }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>선반 (1~11)</div>
+            <div style={{ position: "relative" }}>
+              <CircleProgress percent={grand.shelfPct||0} color="#ffffff" size={80} />
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>{grand.shelfPct||0}%</span>
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 선반 */}
-        <div style={{ flex: 1, background: "linear-gradient(135deg,#0891b2,#0e7490)", borderRadius: 16, padding: "16px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, boxShadow: "0 4px 16px rgba(8,145,178,0.25)" }}>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>선반 (1~11)</div>
-          <div style={{ position: "relative" }}>
-            <CircleProgress percent={grand.shelfPct} color="#ffffff" size={80} />
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>{grand.shelfPct}%</span>
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{grand.shelfDone} / {grand.shelfTotal}</div>
+            <div style={{ display: "flex", gap: 6, width: "100%" }}>
+              {MACHINES.filter(m=>enabledMachines[m]).map(m => (
+                <div key={m} style={{ flex: 1, background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 6px", textAlign: "center" }}>
+                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>{m}호기</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{machineTotals[m]?.shelfPct||0}%</div>
+                </div>
+              ))}
             </div>
           </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{grand.shelfDone} / {grand.shelfTotal}</div>
-          <div style={{ display: "flex", gap: 6, width: "100%" }}>
-            {MACHINES.map(m => (
-              <div key={m} style={{ flex: 1, background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 6px", textAlign: "center" }}>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>{m}호기</div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{machineTotals[m].shelfPct}%</div>
-              </div>
-            ))}
-          </div>
         </div>
-      </div>
+      )}
 
-      {/* Zone Cards */}
+{/* Zone Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
         {ZONES.map(z => {
           const { flowPct, shelfPct, pct } = stats[z];
@@ -448,11 +515,11 @@ export default function App() {
           const shelfBul = shelfAll && !shelfPicking;
           return (
             <div style={{ display:"flex", gap:8, marginBottom:12 }}>
-              <button onClick={() => togglePicking(activeZone, activeMachine, "플로우")} style={{ flex:1, fontSize:11, fontWeight:800, padding:"8px 0", borderRadius:9, cursor:"pointer", transition:"all 0.15s", background:flowBul?"#dcfce7":flowPicking?"#fef9c3":"#f8fafc", border:`1.5px solid ${flowBul?"#86efac":flowPicking?"#fde047":"#e2e8f0"}`, color:flowBul?"#15803d":flowPicking?"#a16207":"#94a3b8", fontFamily:"inherit" }}>
-                {flowBul ? "✓ 플 불출완료" : flowPicking ? "✓ 플 피킹완료" : "플로우 피킹완료"}
+              <button onClick={() => togglePicking(activeZone, activeMachine, "플로우")} style={{ flex:1, fontSize:11, fontWeight:800, padding:"8px 0", borderRadius:9, cursor:"pointer", transition:"all 0.15s", background:flowPicking?"#dcfce7":"#f8fafc", border:`1.5px solid ${flowPicking?"#86efac":"#e2e8f0"}`, color:flowPicking?"#15803d":"#94a3b8", fontFamily:"inherit" }}>
+                {flowPicking ? "✓ 플 피킹완료" : "플로우 피킹완료"}
               </button>
-              <button onClick={() => togglePicking(activeZone, activeMachine, "선반")} style={{ flex:1, fontSize:11, fontWeight:800, padding:"8px 0", borderRadius:9, cursor:"pointer", transition:"all 0.15s", background:shelfBul?"#dcfce7":shelfPicking?"#fef9c3":"#f8fafc", border:`1.5px solid ${shelfBul?"#86efac":shelfPicking?"#fde047":"#e2e8f0"}`, color:shelfBul?"#15803d":shelfPicking?"#a16207":"#94a3b8", fontFamily:"inherit" }}>
-                {shelfBul ? "✓ 선 불출완료" : shelfPicking ? "✓ 선 피킹완료" : "선반 피킹완료"}
+              <button onClick={() => togglePicking(activeZone, activeMachine, "선반")} style={{ flex:1, fontSize:11, fontWeight:800, padding:"8px 0", borderRadius:9, cursor:"pointer", transition:"all 0.15s", background:shelfPicking?"#dcfce7":"#f8fafc", border:`1.5px solid ${shelfPicking?"#86efac":"#e2e8f0"}`, color:shelfPicking?"#15803d":"#94a3b8", fontFamily:"inherit" }}>
+                {shelfPicking ? "✓ 선 피킹완료" : "선반 피킹완료"}
               </button>
             </div>
           );
@@ -512,6 +579,9 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: S.text }}>존별 요약</div>
           <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={toggleCalcMode} style={{ fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:8, cursor:"pointer", background:calcMode==="개별"?"#0f172a":"#f8fafc", border:"1px solid #e2e8f0", color:calcMode==="개별"?"#fff":"#64748b", fontFamily:"inherit", transition:"all 0.15s" }}>
+              {calcMode}
+            </button>
             {MACHINES.map(m => (
               <button key={m} onClick={() => toggleMachineEnabled(m)} style={{
                 fontSize: 10, fontWeight: 800, padding: "4px 12px", borderRadius: 8, cursor: "pointer",
