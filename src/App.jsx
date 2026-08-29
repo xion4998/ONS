@@ -19,10 +19,10 @@ const dbSet = (p, val) => { try { if (fdb) set(ref(fdb, p), val); } catch (e) {}
 
 const EDIT_PASSWORD = "004"; // 수정 비밀번호
 
-const ZONES = ["상부", "하부", "B", "C", "D", "P", "T", "W", "Z"];
+const ZONES = ["상부", "하부", "B", "C", "D", "P/Z", "T", "W", "V"];
 const ZONE_COLORS = {
   "상부": "#7c3aed", "하부": "#2563eb", "B": "#ea580c", "C": "#0891b2",
-  "D": "#dc2626", "P": "#059669", "T": "#db2777", "W": "#65a30d", "Z": "#d97706",
+  "D": "#dc2626", "P/Z": "#059669", "T": "#db2777", "W": "#65a30d", "V": "#6366f1",
 };
 const MACHINES = [1, 2];
 const SHELF_NUMS = [1,2,3,4,5,6,7,8,9,10,11];
@@ -40,7 +40,12 @@ try {
 const initData = () => {
   try {
     const saved = localStorage.getItem("ons_data");
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const d = JSON.parse(saved);
+      if (d["P"] !== undefined && d["P/Z"] === undefined) { d["P/Z"] = d["P"]; delete d["P"]; }
+      if (d["Z"] !== undefined && d["V"] === undefined) { d["V"] = d["Z"]; delete d["Z"]; }
+      return d;
+    }
   } catch (e) {}
   const d = {};
   ZONES.forEach(z => {
@@ -419,7 +424,7 @@ export default function App() {
               {MACHINES.filter(m=>enabledMachines[m]).map(m => (
                 <div key={m} style={{ flex: 1, background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 6px", textAlign: "center" }}>
                   <div style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>{m}호기</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{machineTotals[m]?.flowPct||0}%</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{(machineTotals[m]||{}).flowPct||0}%</div>
                 </div>
               ))}
             </div>
@@ -437,7 +442,7 @@ export default function App() {
               {MACHINES.filter(m=>enabledMachines[m]).map(m => (
                 <div key={m} style={{ flex: 1, background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 6px", textAlign: "center" }}>
                   <div style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>{m}호기</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{machineTotals[m]?.shelfPct||0}%</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{(machineTotals[m]||{}).shelfPct||0}%</div>
                 </div>
               ))}
             </div>
