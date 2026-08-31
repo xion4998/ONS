@@ -66,6 +66,17 @@ function CircleProgress({ percent, color, size = 80 }) {
   const r = (size - 8) / 2;
   const circ = 2 * Math.PI * r;
   const dash = (percent / 100) * circ;
+  if (loading) {
+    return (
+      <div style={{ minHeight:"100vh", background:"#f0f4f8", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Pretendard','Apple SD Gothic Neo',sans-serif" }}>
+        <div style={{ fontSize:28, fontWeight:900, background:"linear-gradient(135deg,#0891b2,#7c3aed)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:16 }}>ONS</div>
+        <div style={{ width:40, height:40, border:"4px solid #e2e8f0", borderTop:"4px solid #0891b2", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ marginTop:16, fontSize:13, color:"#64748b" }}>데이터 불러오는 중...</div>
+      </div>
+    );
+  }
+
   return (
     <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
       <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={5} />
@@ -77,6 +88,7 @@ function CircleProgress({ percent, color, size = 80 }) {
 }
 
 export default function App() {
+  const [loading, setLoading] = useState(true);
   const [data, setData] = useState(initData);
   const [activeZone, setActiveZone] = useState(ZONES[0]);
   const [activeMachine, setActiveMachine] = useState(1);
@@ -123,9 +135,10 @@ export default function App() {
     try { localStorage.setItem("ons_enabled_machines", JSON.stringify(next)); } catch (e) {}
   };
 
-  const saveData = (newData) => { if (!editable) return;
+  const saveData = (newData, zone, machine) => { if (!editable) return;
     setData(newData);
-    try { localStorage.setItem("ons_data", JSON.stringify(newData)); } catch (e) {} dbSet("ons/data", newData);
+    try { localStorage.setItem("ons_data", JSON.stringify(newData)); } catch (e) {}
+    if (zone && machine && newData[zone] && newData[zone][machine]) { dbSet(`ons/data/${zone}/${machine}`, newData[zone][machine]); } else { dbSet("ons/data", newData); }
   };
 
   const toggleNum = (zone, machine, type, idx) => {
@@ -223,8 +236,10 @@ export default function App() {
         setData(v);
         try { localStorage.setItem("ons_data", JSON.stringify(v)); } catch (e) {}
       }
+      setLoading(false);
     }));
-    return () => subs.forEach(u => u());
+    const timeout = setTimeout(() => setLoading(false), 3000);
+    return () => { subs.forEach(u => u()); clearTimeout(timeout); };
   }, []);
 
   const grand = useMemo(() => {
