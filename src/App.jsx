@@ -135,10 +135,9 @@ export default function App() {
     try { localStorage.setItem("ons_enabled_machines", JSON.stringify(next)); } catch (e) {}
   };
 
-  const saveData = (newData, zone, machine) => { if (!editable) return;
+  const saveData = (newData) => { if (!editable) return;
     setData(newData);
-    try { localStorage.setItem("ons_data", JSON.stringify(newData)); } catch (e) {}
-    if (zone && machine && newData[zone] && newData[zone][machine]) { dbSet(`ons/data/${zone}/${machine}`, newData[zone][machine]); } else { dbSet("ons/data", newData); }
+    try { localStorage.setItem("ons_data", JSON.stringify(newData)); } catch (e) {} dbSet("ons/data", newData);
   };
 
   const toggleNum = (zone, machine, type, idx) => {
