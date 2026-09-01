@@ -15,7 +15,17 @@ const firebaseConfig = {
 
 let fdb = null;
 try { fdb = getDatabase(initializeApp(firebaseConfig)); } catch (e) {}
-const dbSet = (p, val) => { try { if (fdb) set(ref(fdb, p), val); } catch (e) {} };
+const dbSet = (p, val) => { 
+  try { 
+    if (fdb) {
+      set(ref(fdb, p), val)
+        .then(() => console.log("Firebase write OK:", p))
+        .catch(e => console.error("Firebase write FAIL:", p, e));
+    } else {
+      console.error("fdb is null!");
+    }
+  } catch (e) { console.error("dbSet error:", e); } 
+};
 
 const EDIT_PASSWORD = "004"; // 수정 비밀번호
 
@@ -123,7 +133,12 @@ export default function App() {
     try { localStorage.setItem("ons_enabled_machines", JSON.stringify(next)); } catch (e) {}
   };
 
-  const saveData = (newData) => { if (!editable) return;
+  const editableRef = useRef(editable);
+  useEffect(() => { editableRef.current = editable; }, [editable]);
+
+  const saveData = (newData) => {
+    const isEditable = editable || (typeof localStorage !== "undefined" && localStorage.getItem("ons_editable") === "true");
+    if (!isEditable) return;
     setData(newData);
     try { localStorage.setItem("ons_data", JSON.stringify(newData)); } catch (e) {} dbSet("ons/data", newData);
   };
@@ -270,6 +285,13 @@ export default function App() {
   }, [stats, enabledMachines, data, calcMode]);
 
   // 대시보드용 요약 실시간 전송
+  // data 변경 시 Firebase 자동 동기화
+  useEffect(() => {
+    ZONES.forEach(z => {
+      if (data[z]) dbSet(`ons/data/${z}`, data[z]);
+    });
+  }, [data]);
+
   useEffect(() => {
     dbSet("summary/ons", { pct: grand.pct, ts: Date.now() });
   }, [grand.pct, grand.flowPct, grand.shelfPct]);
