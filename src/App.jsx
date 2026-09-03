@@ -136,11 +136,17 @@ export default function App() {
   const editableRef = useRef(editable);
   useEffect(() => { editableRef.current = editable; }, [editable]);
 
-  const saveData = (newData) => {
+  const saveData = (newData, changedZone) => {
     const isEditable = editable || (typeof localStorage !== "undefined" && localStorage.getItem("ons_editable") === "true");
     if (!isEditable) return;
     setData(newData);
-    try { localStorage.setItem("ons_data", JSON.stringify(newData)); } catch (e) {} dbSet("ons/data", newData);
+    try { localStorage.setItem("ons_data", JSON.stringify(newData)); } catch (e) {}
+    if (changedZone && newData[changedZone]) {
+      const fbKey = changedZone.replace(/\//g, "_");
+      dbSet(`ons/data/${fbKey}`, newData[changedZone]);
+    } else {
+      ZONES.forEach(z => { if (newData[z]) { const fbKey = z.replace(/\//g, "_"); dbSet(`ons/data/${fbKey}`, newData[z]); } });
+    }
   };
 
   const toggleNum = (zone, machine, type, idx) => {
@@ -153,7 +159,7 @@ export default function App() {
     } else {
       for (let i = 0; i <= idx; i++) newArr[i] = true;
     }
-    saveData({ ...data, [zone]: { ...data[zone], [machine]: { ...((data[zone]||{})[machine]||{}), [type]: newArr } } });
+    saveData({ ...data, [zone]: { ...data[zone], [machine]: { ...((data[zone]||{})[machine]||{}), [type]: newArr } } }, zone);
   };
 
   const togglePicking = (zone, machine, type) => {
@@ -164,7 +170,7 @@ export default function App() {
       ...cur,
       [pickKey]: newVal,
       [type]: newVal ? Array(TYPE_NUMS[type].length).fill(true) : cur[type],
-    }}});
+    }}}, zone);
   };
 
   const [resetConfirm, setResetConfirm] = useState(false);
